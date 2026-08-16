@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# Large binary artefacts — DO NOT COMMIT
+# GitHub rejects any single file > 100 MB and warns above 50 MB.
+# The FAISS indexes here are 73 MB – 306 MB each (~1.1 GB total).
+# Rebuild them locally with scripts/batch_search.py:index_codes(), or
+# distribute them via Git LFS / a release asset / shared storage.
+# ---------------------------------------------------------------------------
+*.index
+index/*.index
+icd10_faiss.index
+
+# Pickled ICD hierarchy (11 MB, and pickles execute code on load)
+*.pkl
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyc.*
+.venv/
+venv/
+env/
+.Python
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Secrets & local config
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.*
+.streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Model / HF caches
+# ---------------------------------------------------------------------------
+.cache/
+hf_cache/
+models/
+
+# ---------------------------------------------------------------------------
+# OS / editor noise
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

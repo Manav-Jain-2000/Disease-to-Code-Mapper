@@ -1,0 +1,33 @@
+# Disease to Code Mapper — runtime dependencies
+#
+# Python 3.10–3.12 required. torch and faiss-cpu have no wheels for 3.13/3.14.
+# Versions below were installed and verified end-to-end on Windows, Python 3.12.14.
+#
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# On Windows/macOS, `torch` resolves to the CPU build. For CUDA, install torch first
+# from https://pytorch.org/get-started/locally/ then run this file.
+
+# --- app ---
+streamlit==1.61.1
+
+# --- embeddings / vector search ---
+torch==2.13.0
+transformers==5.15.0
+faiss-cpu==1.15.0
+huggingface_hub==1.27.0
+safetensors==0.8.0
+
+# --- data ---
+pandas==3.0.5
+numpy==2.5.2
+openpyxl==3.1.5          # pandas needs this to read the .xlsx metadata files
+
+# --- ICD hierarchy visualisation ---
+networkx==3.6.1
+matplotlib==3.11.1
+
+# --- optional: only for genai_vision.ipynb (Groq vision extraction) ---
+# groq>=0.11.0
