@@ -15,17 +15,27 @@ wrapped in Streamlit. Branded for Cognitio Analytics ("MediCode").
 
 ## 2. Which file is the app
 
-`u10.py`. Everything else with a UI is a superseded iteration:
+`app.py` at the root — this was `u10.py` until the 2026-08-16 restructure. Everything
+else with a UI was a superseded iteration and now lives in `archive/ui_versions/`:
 
 | File | Date | Note |
 |---|---|---|
-| `u10.py` | 15 Dec 2025 | **current** — adds session-state routing + `@st.cache_resource` on the pickle/xlsx loads |
-| `u9.py` | 5 Dec 2025 | same UI, no caching, loads pickle at import |
-| `U8.py` | 4 Dec 2025 | no ontology tree, no config.ini |
-| `app.py` | 30 Nov 2025 | older gradient/magenta design |
-| `U_frontend.py` | 26 Nov 2025 | first UI sketch, fully mocked |
+| `app.py` (was `u10.py`) | 15 Dec 2025 | **current** — session-state routing + `@st.cache_resource` on the pickle/xlsx loads |
+| `archive/ui_versions/u9.py` | 5 Dec 2025 | same UI, no caching, loads pickle at import |
+| `archive/ui_versions/U8.py` | 4 Dec 2025 | no ontology tree, no config.ini |
+| `archive/ui_versions/app.py` | 30 Nov 2025 | older gradient/magenta design — *not* the current app.py |
+| `archive/ui_versions/U_frontend.py` | 26 Nov 2025 | first UI sketch, fully mocked |
 
-Do not "fix" bugs in the older four — delete them or leave them alone.
+Do not "fix" bugs in the archived four. Note the name collision: `archive/ui_versions/app.py`
+is the *old* UI, unrelated to the root `app.py`.
+
+### Notebook lineage
+
+`notebooks/final_v2.ipynb` (MedEmbed + SapBERT) is the direct ancestor of
+`scripts/icd_10_cm_search_bar.py`. The earlier **BioLORD** line —
+`archive/notebooks/final.ipynb`, `late_fusion.ipynb`, `new.ipynb`, all using
+`FremyCompany/BioLORD-2023` — was abandoned and is referenced nowhere in `config.ini`.
+If you are wondering why a stray `index/icd10_faiss_biolord.index` exists, that is why.
 
 ## 3. Non-obvious design decisions
 
@@ -54,6 +64,18 @@ Do not "fix" bugs in the older four — delete them or leave them alone.
 - Also available on this machine: Anaconda 3.9, Windows Store 3.9.
 - Hugging Face weights (~2.5 GB) land in `%USERPROFILE%\.cache\huggingface`, not in the repo.
 - C: drive was at ~92% full — watch disk before installing.
+
+## 4b. Repository restructure — 2026-08-16
+
+The root held 13 notebooks, 5 UI variants and 8 loose data files. Reorganised into
+`data/`, `notebooks/`, `assets/`, `archive/{ui_versions,notebooks}/`, with `scripts/`
+and `index/` unchanged. All moves used `git mv`, so history follows the files.
+
+Only three code paths needed updating: `graph_pickle` and `group_to_chapter_data` in
+`config.ini` (now `data/…`), and the sidebar logo in `app.py` (now `assets/…`). The
+full 8-check suite was re-run afterwards and still passes.
+
+`archive/` is inert — nothing in `scripts/` or `app.py` imports from it.
 
 ## 5. Path handling — fixed 2026-08-16
 

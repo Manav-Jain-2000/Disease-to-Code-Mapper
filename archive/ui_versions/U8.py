@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-df_master = pd.read_excel("ICD_10_CM_Complete_Data.xlsx")
+df_master = pd.read_excel("data/ICD_10_CM_Complete_Data.xlsx")
 # -----------------------------------------------------------------------------
 # CUSTOM STYLING (BLUE / CLINICAL THEME)
 # -----------------------------------------------------------------------------

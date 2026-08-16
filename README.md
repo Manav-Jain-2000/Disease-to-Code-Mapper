@@ -60,35 +60,53 @@ query ──► tokenizer + transformer ──► mean pooling ──► L2 norm
 
 ```
 .
-├── u10.py                      # ← CURRENT Streamlit app (entry point)
-├── u9.py, U8.py, app.py,       # earlier UI iterations, kept for reference
-│   U_frontend.py
-├── config.ini                  # model names + index/metadata paths
-├── cognitio_logo.png           # sidebar logo
-├── scripts/
-│   ├── icd_10_cm_search_bar.py # dual-model late fusion + graph boosting
-│   ├── icd_10_pcs_search_bar.py# single-model PCS search
-│   ├── cpt_search_bar.py       # single-model CPT search
-│   ├── batch_search.py         # generic index/search pipeline + bulk runner
-│   └── graph_visualize.py      # ICD hierarchy → networkx → matplotlib
-├── index/                      # FAISS indexes + metadata (NOT in git, see below)
-├── icd_code_hierarchy.pkl      # pickled ICD tree of ICDcodeNode objects (NOT in git)
-├── group_to_chapter_data.xlsx  # 3-char grouper → section → chapter lookup (1,918 rows)
-├── ICD_10_CM_Complete_Data.xlsx, icd10cm-order-2025.txt, ...  # source reference data
-└── *.ipynb                     # exploratory notebooks (index building, NER, fusion experiments)
+├── app.py                        # ← Streamlit app, the entry point
+├── config.ini                    # model names + index/metadata paths
+├── requirements.txt
+├── scripts/                      # runtime search code
+│   ├── icd_10_cm_search_bar.py   # dual-model late fusion + graph boosting
+│   ├── icd_10_pcs_search_bar.py  # single-model PCS search
+│   ├── cpt_search_bar.py         # single-model CPT search
+│   ├── batch_search.py           # generic index/search pipeline + bulk runner
+│   └── graph_visualize.py        # ICD hierarchy → networkx → matplotlib
+├── index/                        # FAISS indexes + metadata sidecars
+│                                 #   (.index files NOT in git — see below)
+├── data/                         # source reference data
+│   ├── icd_code_hierarchy.pkl    #   pickled ICD tree (NOT in git)
+│   ├── group_to_chapter_data.xlsx#   3-char grouper → section → chapter (1,918 rows)
+│   ├── ICD_10_CM_Complete_Data.xlsx, icd10cm-order-2025.txt,
+│   │   icd10_codes_top_level_only.csv, chapters_and_sections.txt
+│   └── test.xlsx                 #   sample search output
+├── assets/cognitio_logo.png
+├── notebooks/                    # notebooks that still matter (see below)
+└── archive/                      # superseded — kept for provenance, nothing imports it
+    ├── ui_versions/              #   u9.py, U8.py, app.py, U_frontend.py
+    └── notebooks/                #   the BioLORD-era experiments
 ```
 
 ### Notebooks
 
-These are research scratchpads, not part of the runtime path. They still contain
-hard-coded absolute paths from the original author's machine
+Research scratchpads, not part of the runtime path. They still contain hard-coded
+absolute paths from the original author's machine
 (`C:\Users\UNegi\Documents\Project\makethon\...`) and will not run as-is.
-The useful ones:
 
-- `build_icd_code_hirarchy.ipynb` — builds `icd_code_hierarchy.pkl` from `icd10cm-order-2025.txt`
-- `final_v2.ipynb`, `late_fusion.ipynb` — late-fusion scoring experiments
-- `medical_ner.ipynb`, `semantic_match_health.ipynb` — NER / embedding experiments
-- `genai_vision.ipynb` — Groq vision document extraction (needs `GROQ_API_KEY` in the environment)
+`notebooks/` — the ones worth keeping:
+
+| Notebook | Purpose |
+|---|---|
+| `build_icd_code_hirarchy.ipynb` | builds `data/icd_code_hierarchy.pkl` from `icd10cm-order-2025.txt` |
+| `data_extraction.ipynb` | parses the CMS ICD-10 source files |
+| `new_data.ipynb` | builds the grouper → section → chapter mapping |
+| `final_v2.ipynb` | **the direct ancestor of `scripts/icd_10_cm_search_bar.py`** — MedEmbed + SapBERT late fusion |
+| `medical_ner.ipynb` | NER experiment; the starting point if you ever build the Clinical NLP page for real |
+| `genai_vision.ipynb` | Groq vision document extraction (needs `GROQ_API_KEY`); a separate feature line |
+
+`archive/notebooks/` — superseded, kept only so the reasoning is traceable:
+`final.ipynb`, `late_fusion.ipynb` and `new.ipynb` are the earlier **BioLORD**
+(`FremyCompany/BioLORD-2023`) experiments that the MedEmbed pairing replaced —
+`config.ini` references none of them. `semantic_match_health.ipynb` is index-building
+superseded by `scripts/batch_search.py`; `gemma.ipynb`, `transformer_based.ipynb` and
+`scipay.ipynb` are one-off model trials.
 
 ## Setup
 
@@ -117,7 +135,7 @@ Run from the **project root** — `config.ini` uses paths relative to the workin
 directory.
 
 ```bash
-streamlit run u10.py
+streamlit run app.py
 ```
 
 First launch downloads three models (~2.5 GB) and memory-maps ~535 MB of FAISS
@@ -136,8 +154,8 @@ faiss_index_path = index/icd10_faiss_medembed.index
 excel_metadata = index/icd10_metadata_medembed.xlsx
 faiss_index_path_sap = index/icd10_faiss_sapbert_from_pubmedbert.index
 excel_metadata_sap = index/icd10_metadata_sapbert_from_pubmedbert.xlsx
-graph_pickle = icd_code_hierarchy.pkl
-group_to_chapter_data = group_to_chapter_data.xlsx
+graph_pickle = data/icd_code_hierarchy.pkl
+group_to_chapter_data = data/group_to_chapter_data.xlsx
 ```
 
 `default_threshold` (in `[DEFAULT]`, currently `0.35`) is the minimum cosine
@@ -149,7 +167,7 @@ The indexes are not in version control. To rebuild one from a source spreadsheet
 with `Code` and `Description` columns:
 
 ```bash
-python -c "from scripts.batch_search import index_codes; index_codes('CPT', 'ICD_10_CM_Complete_Data.xlsx')"
+python -c "from scripts.batch_search import index_codes; index_codes('CPT', 'data/ICD_10_CM_Complete_Data.xlsx')"
 ```
 
 The case name must match a `config.ini` section (`CPT`, `ICD-10-CM`, `ICD-10-PCS`).
@@ -168,7 +186,7 @@ that section. Expect this to take a while — every description is embedded.
 | `index/icd10_faiss_pcs.index` | — | 246 MB |
 | `index/icd10_faiss_sapbert_from_pubmedbert.index` | — | 230 MB |
 | `index/cpt_faiss.index` | — | 73 MB |
-| `icd10_faiss.index` (root) | — | 230 MB, an older stray index; not referenced by `config.ini` |
+| `archive/icd10_faiss.index` | — | 230 MB, an older stray index; not referenced by `config.ini` |
 | `index/icd10_faiss_biolord.index` + metadata | — | 230 MB, BioLORD experiment; not referenced by `config.ini` |
 
 ICD-10-CM/PCS source data is public CMS reference data. CPT codes are AMA
@@ -185,7 +203,7 @@ copyrighted — check your licence before redistributing `cpt_metadata.xlsx`.
   The ICD-10-CM and ICD-10-PCS metadata files are clean.
 - **`icd_code_hierarchy.pkl` unpickles into `__main__`.** It was created in a notebook,
   so `pickle.load()` looks for `__main__.ICDcodeNode`. That is the *only* reason
-  `u10.py` line 9 imports `ICDcodeNode` — do not remove that import as "unused", and any
+  `app.py` line 9 imports `ICDcodeNode` — do not remove that import as "unused", and any
   new entry point must import it too or the ontology tree dies with an `AttributeError`.
 - **Import-time loading.** `scripts/icd_10_cm_search_bar.py` loads two models and
   two FAISS indexes at module import, so the first Streamlit run is slow and holds
@@ -196,10 +214,8 @@ copyrighted — check your licence before redistributing `cpt_metadata.xlsx`.
   `batch_search_function()` rather than a clear message.
 - **Unpickling `icd_code_hierarchy.pkl` executes code.** Only load the file you
   generated yourself.
-- **Five UI variants** (`u10.py`, `u9.py`, `U8.py`, `app.py`, `U_frontend.py`) still
-  live in the repo. `u10.py` is current; the rest are dead weight.
-- `requirement.txt` (singular) is the old, incomplete dependency list — superseded by
-  `requirements.txt`.
+- **Five UI variants** existed; the four superseded ones now sit in `archive/ui_versions/`. `app.py` (formerly `u10.py`) is current.
+- `archive/requirement.txt` (singular) is the old, incomplete dependency list, kept only for reference.
 
 ## Before you push to git
 

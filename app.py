@@ -1,511 +1,554 @@
 import streamlit as st
 import pandas as pd
 import time
-import os
+import random
 from scripts.icd_10_cm_search_bar import icd_10_cm_search_bar
 from scripts.icd_10_pcs_search_bar import search_icd10_pcs_search_bar
-# --- 1. CONFIGURATION AND STYLING (Modern Aesthetic & Branding) ---
+from scripts.cpt_search_bar import cpt_search_bar
+from scripts.graph_visualize import build_networkx_graph, visualize_large_graph
+from scripts.icd_10_cm_search_bar import ICDcodeNode
+from scripts.batch_search import batch_search_function
+import networkx as nx
+import matplotlib.pyplot as plt
+from io import BytesIO
+import configparser
+import pickle
 
-# Refined Hex codes for a premium, Cognitio-like aesthetic
-COLOR_DEEP_NAVY = "#112D57"         
-COLOR_BRAND_MAGENTA = "#E0407F"     
-COLOR_CTA_GRADIENT_END = "#AF44B0"  
-COLOR_BACKGROUND_LIGHT = "#F0F2F6"  
-COLOR_TEXT_DARK = "#333333"         
-class ICDcodeNode:
-    def __init__(self, icd_code, description, children, parent):
-        self.icd_code = icd_code
-        self.description = description
-        self.children  =  children
-        self.parent = parent
+# -----------------------------------------------------------------------------
+# SESSION STATE INITIALIZATION (BEFORE PAGE CONFIG)
+# -----------------------------------------------------------------------------
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Dashboard"
 
-    def get_children(self):
-        return self.children
+# -----------------------------------------------------------------------------
+# PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="MediCode | Cognitio Analytics",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# -----------------------------------------------------------------------------
+# CACHED DATA LOADING
+# -----------------------------------------------------------------------------
+@st.cache_resource
+def load_graph_data(pickle_path):
+    with open(pickle_path, "rb") as f:
+        return pickle.load(f)
+
+@st.cache_data
+def load_chapter_data(excel_path):
+    return pd.read_excel(excel_path)
+
+config = configparser.ConfigParser()
+config.read("config.ini")
+ICD_GRAPH_PICKLE = config["ICD-10-CM"]["graph_pickle"]
+
+# Load data with caching
+node_dict = load_graph_data(ICD_GRAPH_PICKLE)
+df_grp_chap = load_chapter_data(config["ICD-10-CM"]["group_to_chapter_data"])
+
+# -----------------------------------------------------------------------------
+# CUSTOM STYLING (BLUE / CLINICAL THEME)
+# -----------------------------------------------------------------------------
+st.markdown("""
+    <style>
+    /* Global Font & Colors */
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Inter:wght@400;500&display=swap');
     
-    def add_child(self, child):
-        if child not in self.children:
-            self.children.append(child)
-
-    def get_parent(self):
-        return self.parent
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
     
-    def set_parent(self,parent):
-        self.parent = parent
-
-    def __repr__(self):
-        return f'{self.icd_code} - {self.description} -  Children: {[x.icd_code for x in self.children]}'
-# --- IMPORTANT: Logo Path Configuration ---
-LOGO_PATH = "cognitio_logo.png" 
-
-def set_custom_css():
-    """Applies modern aesthetic CSS using gradients and depth."""
+    h1, h2, h3 {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-weight: 700;
+        color: #0f172a;
+    }
     
-    GRADIENT_STYLE = f"""
-        background-image: linear-gradient(to right, {COLOR_BRAND_MAGENTA} 0%, {COLOR_CTA_GRADIENT_END} 100%);
+    /* Theme Colors (Retaining Primary for Main Content) */
+    :root {
+        --primary: #c8306d;      /* Brand Color (Magenta) */
+        --primary-dark: #9d1568; 
+        --bg-soft: #fdf2f8;      /* Pink 50 */
+        --text-main: #0f172a;    /* Slate 900 */
+        --text-muted: #64748b;   /* Slate 500 */
+    }
+
+    /* Sidebar Styling - UPDATED COLOR: #2596be */
+    section[data-testid="stSidebar"] {
+        background-color: #063970; /* Updated Sidebar Color to Blue */
+    }
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] span, 
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] div {
+        color: #ffffff !important; 
+    }
+    section[data-testid="stSidebar"] .stRadio label {
+        color: #ffffff !important;
+    }
+
+    /* Sidebar Navigation Buttons */
+    section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] {
+        gap: 8px; /* Vertical spacing between buttons */
+    }
+
+    section[data-testid="stSidebar"] .stRadio label {
+        background-color: rgba(255, 255, 255, 0.1); /* Subtle white background */
+        border-radius: 8px;
+        padding: 10px 15px;
+        transition: background-color 0.2s;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-weight: 500 !important;
+    }
+
+    /* Selected state */
+    section[data-testid="stSidebar"] .stRadio label[data-testid="stCheckableElement-checked"] {
+        background-color: #ffffff; /* White background when selected */
+        border-color: #ffffff;
+        font-weight: 700 !important;
+    }
+
+    section[data-testid="stSidebar"] .stRadio label[data-testid="stCheckableElement-checked"] p {
+        color: #2596be !important; /* Blue text color when selected (matches sidebar BG) */
+    }
+
+    /* Hide the default radio dot */
+    section[data-testid="stSidebar"] .stRadio [data-testid="stCheckableElement-empty"],
+    section[data-testid="stSidebar"] .stRadio [data-testid="stCheckableElement-checked"] {
+        display: none;
+    }
+
+    /* Buttons (Main Content) */
+    .stButton > button {
+        background-color: var(--primary);
         color: white;
+        border-radius: 8px;
         border: none;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-        transition: all 0.3s ease-in-out;
-    """
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        background-color: var(--primary-dark);
+        box-shadow: 0 4px 12px rgba(219, 39, 119, 0.25);
+        color: white;
+    }
+
+    /* Cards / Containers */
+    .metric-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-main);
+    }
+    .metric-label {
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    /* Hero Section Card */
+    .hero-card {
+        background-color: var(--primary); /* Keep brand color for hero */
+        color: white;
+        border-radius: 16px;
+        padding: 3rem;
+        margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
+    }
+    .hero-card h1 {
+        color: white !important;
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+    }
+    .hero-card p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        margin-bottom: 2rem;
+        max-width: 800px;
+    }
+
+    /* Custom Result Card */
+    .result-card {
+        border-left: 4px solid var(--primary);
+        background: white;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border-radius: 0 8px 8px 0;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
     
-    st.markdown(
-        f"""
-        <style>
-        .stApp {{
-            background-color: {COLOR_BACKGROUND_LIGHT};
-        }}
-        .css-1d391kg, .css-18e3th9, .css-1dp5ss0 {{
-            background-color: white; 
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1); 
-        }}
-        .sidebar .sidebar-content {{
-            background-color: white;
-            padding: 20px;
-            border-right: 1px solid #EEEEEE;
-        }}
-        .stButton button[kind="primary"] {{
-            {GRADIENT_STYLE}
-        }}
-        .stButton button[kind="primary"]:hover {{
-            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-            transform: translateY(-2px);
-        }}
-        
-        /* Typography */
-        h1, h2, h3, h4 {{
-            color: {COLOR_DEEP_NAVY};
-        }}
-        .st-h1-cognitio {{
-            color: {COLOR_DEEP_NAVY};
-            font-size: 38px;
-            font-weight: 800;
-            line-height: 1.1;
-        }}
-        .st-subtitle-onepiece {{
-            color: #6c757d;
-            font-size: 14px;
-            margin-top: -10px;
-            margin-bottom: 20px;
-            display: block;
-        }}
-        .st-card-modern {{
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-            background-color: #FFFFFF;
-            margin-bottom: 20px;
-        }}
-        
-        /* Fix for Streamlit image padding/margin in columns */
-        .css-1jc7a0z, .css-1r0fymm, .css-1r6gwwb, .css-1g6x2c9 {{
-            padding: 0;
-            margin: 0;
-        }}
-        
-        .nav-links {{
-            text-align: right; 
-            font-size: 16px; 
-            padding-top: 10px; 
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
-    if 'page' not in st.session_state:
-        st.session_state.page = 'landing'
-    if 'mapping_triggered' not in st.session_state:
-        st.session_state.mapping_triggered = False
-    if 'batch_processed' not in st.session_state:
-        st.session_state.batch_processed = False
-    if 'app_mode' not in st.session_state:
-        st.session_state.app_mode = 'Interactive Disease Mapping'
-
-# --- 2. COMPONENTS AND DATA ---
-
-def get_sample_results(mode='interactive'):
-    """Generates sample data for results table with HTML for confidence bars."""
-    if mode == 'interactive':
-        data = {
-            'Comorbidity': ['Insomnia', 'Sleep Apnea', 'Anxiety Disorder'],
-            'CODE': ['G47.00 (ICD-10 CM)', 'G47.33 (ICD-10 PCS)', 'F41.9 (CPT)'],
-            'Confidence': [0.95, 0.75, 0.30]
-        }
-    else: # Batch mode
-        data = {
-            'Original Input Term': ['Trouble Sleeping', 'Chronic Cough', 'Type 2 Diabetes'],
-            'CODE': ['G47.00 (CM)', 'R05 (CM)', 'E11.9 (CM)'],
-            'Confidence': [0.99, 0.65, 0.90]
-        }
+# -----------------------------------------------------------------------------
+# SIDEBAR
+# -----------------------------------------------------------------------------
+with st.sidebar:
+    # LOGO HANDLING - WIDTH INCREASED
+    st.image(r"assets/cognitio_logo.png", width=280)
     
-    df = pd.DataFrame(data)
+    st.markdown("### Disease to Code Mapper") 
+    st.caption("Enterprise Clinical Coding Platform")
     
-    def confidence_bar(conf):
-        color = 'green' if conf > 0.9 else ('orange' if conf > 0.6 else 'red')
-        width = int(conf * 100)
-        return f'<div style="width: 100px; background-color: #eee; border-radius: 3px; height: 8px;">' \
-               f'<div style="width: {width}%; background-color: {color}; border-radius: 3px; height: 8px;"></div>' \
-               f'</div> <span style="font-size: 0.9em; color: {COLOR_TEXT_DARK};"> {conf*100:.0f}%</span>'
-
-    df['Confidence'] = df['Confidence'].apply(confidence_bar)
-    return df.to_html(escape=False, index=False)
-
-
-# --- 3. PAGE VIEWS ---
-
-def landing_page():
-    """Builds the aesthetic Landing Page with the Cognitio Analytics logo and clickable cards."""
-    
-    col_logo, col_nav = st.columns([4, 5]) 
-
-    with col_logo:
-        try:
-            st.image(LOGO_PATH, width=450) 
-        except FileNotFoundError:
-            st.error(f"Logo not found. Ensure '{LOGO_PATH}' is in the same directory as the script.")
-        except Exception:
-            st.markdown(
-                f'<span style="font-size: 16px; font-weight: 700; color: {COLOR_DEEP_NAVY};">Cognitio Analytics</span>',
-                unsafe_allow_html=True
-            )
-
-    with col_nav:
-        # Pushes the navigation links down to align with the bottom of the larger logo.
-        st.markdown("<div style='height: 50px;'></div>", unsafe_allow_html=True) 
-        st.markdown(
-            f'<div class="nav-links">Solutions | About Us | Contact</div>', 
-            unsafe_allow_html=True
-        )
-
     st.markdown("---")
-
-    # Helper function to create clickable card elements
-    def clickable_card(mode, title, description, color):
-        # We use a hidden Streamlit button to manage state transitions
-        if st.button(title, key=f"launch_{mode}", use_container_width=True):
-            st.session_state.page = 'app'
-            st.session_state.app_mode = mode
-        
-        # Use HTML/CSS to style the visible card. 
-        # Note: True cross-browser click-to-Streamlit-state transition without JS is complex, 
-        # so we rely on the hidden button above for core functionality.
-        st.markdown(
-            f"""
-            <div class="st-card-modern" style="min-height: 150px; text-align: center; margin-top: -30px;">
-                <p style="font-weight: 700; color: {color}; font-size: 1.1em; margin-bottom: 5px;">{title}</p>
-                <p>{description}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-    # Hero Section - Main Title
-    st.markdown('<div class="st-card-modern" style="padding: 40px; text-align: center;">', unsafe_allow_html=True)
-    st.markdown(
-        f'<h1 class="st-h1-cognitio" style="color: {COLOR_BRAND_MAGENTA};">AI-Powered Disease to Code Mapper</h1>',
-        unsafe_allow_html=True
+    
+    # Navigation uses session state
+    page_options = ["Dashboard", "Interactive Mapping", "Batch Processing", "Clinical NLP"]
+    page = st.radio(
+        "Navigation",
+        page_options,
+        label_visibility="collapsed",
+        key="nav_radio",
+        index=page_options.index(st.session_state.current_page)
     )
-    st.markdown(
-        f'<h2 style="color: {COLOR_DEEP_NAVY}; font-size: 1.8em; font-weight: 500; margin-top: 10px;">'
-        'Rapidly transform clinical terminology into accurate, standardized codes (ICD-10, CPT).'
-        '</h2>',
-        unsafe_allow_html=True
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
     
+    # Update session state when navigation changes
+    if page != st.session_state.current_page:
+        st.session_state.current_page = page
+        st.rerun()
     
-    # Key Features Section (Now with dedicated launch buttons)
-    st.markdown(f'<h2 style="color: {COLOR_DEEP_NAVY}; margin-top: 40px; text-align: center;">Core Capabilities</h2>', unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        clickable_card(
-            'Interactive Disease Mapping', 
-            'Interactive Disease Mapping', 
-            'Real-time, high-confidence mapping for single disease terms.', 
-            COLOR_BRAND_MAGENTA
-        )
+    st.markdown("---")
+    with st.expander("System Status", expanded=True):
+        st.markdown("🟢 **System Online**")
+        st.caption("v2.4.0 • Enterprise Edition")
 
-    with col2:
-        clickable_card(
-            'Batch Processing', 
-            'Batch Processing', 
-            'Upload CSVs for high-volume mapping and easy export.', 
-            COLOR_BRAND_MAGENTA
-        )
-        
-    with col3:
-        # Note: Clinical Text remains non-functional, but acts as a visual card
-        st.markdown(
-            """
-            <div class="st-card-modern" style="min-height: 180px; text-align: center;">
-            <p style="font-weight: 700; color: #E0407F; font-size: 1.1em; margin-bottom: 5px;">Clinical Text</p>
-            <p>Maps against ICD-10 CM, ICD-10 PCS, and CPT standards.</p>
-            </div>
-            """, unsafe_allow_html=True)
+# -----------------------------------------------------------------------------
+# PAGES
+# -----------------------------------------------------------------------------
 
-
-
-def app_interface():
-    """Builds the main Disease Mapper application interface."""
-    
-    # -------------------------------------------------------------------------
-    # NEW: Helper functions for mutually-exclusive checkbox behavior
-    # -------------------------------------------------------------------------
-    def _set_code_type(selected_key: str):
-        """Ensure only one Interactive mode checkbox remains True."""
-        for k in ('interactive_cm', 'interactive_pcs', 'interactive_cpt'):
-            st.session_state[k] = (k == selected_key)
-
-    def _set_batch_code_type(selected_key: str):
-        """Ensure only one Batch mode checkbox remains True."""
-        for k in ('batch_cm', 'batch_pcs', 'batch_cpt'):
-            st.session_state[k] = (k == selected_key)
-
-    # Initialize defaults (so we don’t get KeyErrors on first render)
-    st.session_state.setdefault('interactive_cm', True)
-    st.session_state.setdefault('interactive_pcs', False)
-    st.session_state.setdefault('interactive_cpt', False)
-
-    st.session_state.setdefault('batch_cm', True)
-    st.session_state.setdefault('batch_pcs', False)
-    st.session_state.setdefault('batch_cpt', False)
-    # -------------------------------------------------------------------------
-
-    with st.sidebar:
-        
-        st.markdown(f'<div style="text-align: center; font-size: 1.5em; font-weight: 700; color: {COLOR_DEEP_NAVY}; margin-bottom: 15px;">Mapping Modes</div>', unsafe_allow_html=True)
-
-        mode_mapping = {
-            'Interactive Disease Mapping': 'Interactive Disease Mapping',
-            'Batch Processing': 'Batch Processing'
-        }
-        
-        for label, mode_key in mode_mapping.items():
-            button_style = 'primary' if st.session_state.app_mode == mode_key else 'secondary'
-            
-            if st.button(label, key=mode_key, use_container_width=True, type=button_style):
-                st.session_state.app_mode = mode_key
-                st.session_state.mapping_triggered = False
-                st.session_state.batch_processed = False
-        
-        st.button('Clinical Text (Inactive)', key='Clinical Text', use_container_width=True, disabled=True)
-        
-        st.markdown("---")
-        
-        # Sidebar Filters based on the selected mode
-        if st.session_state.app_mode == 'Interactive Disease Mapping':
-            st.markdown(f'<h4 style="color: {COLOR_DEEP_NAVY}; margin-top: 10px;">Search Filters</h4>', unsafe_allow_html=True)
-            
-            st.selectbox(
-                'Result count: Top k results',
-                options=[3, 5, 10, 20],
-                index=1,
-                key='interactive_top_k'
-            )
-            
-            st.markdown('**Code type:**')
-            col_cm, col_pcs, col_cpt = st.columns(3)
-
-            # -----------------------------------------------------------------
-            # NEW: Mutually-exclusive checkboxes (Interactive)
-            # -----------------------------------------------------------------
-            with col_cm:
-                st.checkbox(
-                    'ICD-10 CM',
-                    value=st.session_state.interactive_cm,
-                    key='interactive_cm',
-                    on_change=_set_code_type,
-                    args=('interactive_cm',)
-                )
-            with col_pcs:
-                st.checkbox(
-                    'ICD-10 PCS',
-                    value=st.session_state.interactive_pcs,
-                    key='interactive_pcs',
-                    on_change=_set_code_type,
-                    args=('interactive_pcs',)
-                )
-            with col_cpt:
-                st.checkbox(
-                    'CPT',
-                    value=st.session_state.interactive_cpt,
-                    key='interactive_cpt',
-                    on_change=_set_code_type,
-                    args=('interactive_cpt',)
-                )
-            # -----------------------------------------------------------------
-
-    # --------------------------------------------------------------------------------
-    # KEY FIX: Customized Header with Color (Aligned and Styled)
-    # --------------------------------------------------------------------------------
-    st.markdown(
-        f"""
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: -10px;">
-            <p style="font-size: 30px; color: {COLOR_DEEP_NAVY};">☰</p> 
-            <h1 style="font-size: 2.2em; font-weight: 800; color: {COLOR_DEEP_NAVY}; line-height: 1;">
-                Disease 
-                <span style="color: {COLOR_BRAND_MAGENTA};">Mapper</span>
-            </h1>
+def show_dashboard():
+    # Hero Section (kept simple for makethon — metrics removed)
+    st.markdown("""
+        <div class="hero-card">
+            <h1>Welcome to Disease to Code Mapper</h1>
+            <p>Your intelligent partner for standardized clinical coding. Process single terms, batch files, or unstructured clinical notes with high-confidence AI predictions.</p>
         </div>
-        """, unsafe_allow_html=True
+    """, unsafe_allow_html=True)
+
+    st.markdown("### About the product")
+    st.markdown(
+        """
+        **Disease to Code Mapper** is an enterprise clinical-coding assistant that:
+        - Converts clinical terms (single-term or free-text notes) to standardized codes (ICD-10-CM, ICD-10-PCS, CPT).
+        - Supports bulk (CSV/XLSX) processing and provides a review workflow for coder validation.
+
+
+        """
     )
-    st.markdown('<span class="st-subtitle-onepiece">by OnePiece</span>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns([1, 4])
+    with c1:
+        if st.button("Start Mapping", type="primary", use_container_width=True):
+            st.session_state.current_page = "Interactive Mapping"
+            st.rerun()
+
     st.markdown("---")
+    st.markdown("### Next Steps")
+    st.markdown(
+        """
+        - Use **Interactive Mapping** for single-term lookups.
+        - Use **Batch Processing** to upload a file and run bulk mapping.
+        - Use **Clinical NLP** to extract codes from unstructured clinical notes.
+        """
+    )
 
+def show_interactive():
+    st.title("Interactive Mapping")
+    st.markdown("Real-time AI lookup for clinical terminology.")
 
-    if st.session_state.app_mode == 'Interactive Disease Mapping':
-        
-        st.markdown(
-            f'<h3 style="color: {COLOR_DEEP_NAVY};">Interactive Disease Mapping</h3>',
-            unsafe_allow_html=True
+    # --- Session state defaults ---
+    defaults = {
+        "mapped": False,
+        "results_df": None,
+        "systems_last": None,
+        "top_k_last": 5,
+        "query_last": "",
+        "selected_chapter": None,
+        "show_tree": False,
+    }
+    for k, v in defaults.items():
+        st.session_state.setdefault(k, v)
+
+    # --- INPUT AREA ---
+    with st.container():
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            query = st.text_input(
+                "Search Term",
+                placeholder="e.g. Chest pain, Hypertension...",
+                value=st.session_state.get("query_last", "")
+            )
+        with c2:
+            top_k = st.selectbox(
+                "Limit Results",
+                [1, 3, 5, 10, "All"],
+                index=2,
+                key="top_k_ui"
+            )
+
+        systems = st.selectbox(
+            "Filter by System",
+            ["ICD-10-CM", "ICD-10-PCS", "CPT"],
+            index=0,
+            key="systems_ui"
         )
 
-        input_col, button_col = st.columns([4, 1])
-        with input_col:
-            disease_name = st.text_input("Input: Disease name", "TROUBLE SLEEPING", key='disease_input', help="Enter a clinical term or disease name.")
-        with button_col:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True) 
-            if st.button("MAP CODE", key='map_code_btn', type='primary', use_container_width=True):
-                st.session_state.mapping_triggered = True
+        # --- MAP BUTTON ---
+        if st.button("Map Term"):
+            if query:
+                with st.spinner("Running Embedding Model..."):
+                    df = pd.DataFrame()
+                    time.sleep(0.5)
 
-        
+                    try:
+                        if systems == 'ICD-10-CM':
+                            df = icd_10_cm_search_bar(query)
+                            # normalize column names to use same rendering code later
+                            df.rename(columns={
+                                'Score (0-100)': 'confidence',
+                                'ICD_Code': 'code',
+                                'Description': 'description'
+                            }, inplace=True)
 
-        if st.session_state.mapping_triggered:
-            # Existing Card (kept same)
-            # st.markdown('<div class="st-card-modern">', unsafe_allow_html=True)
-            # results_html = get_sample_results(mode='interactive')
-            # st.markdown(results_html, unsafe_allow_html=True)
-            # st.markdown('</div>', unsafe_allow_html=True)
+                        elif systems == 'ICD-10-PCS':
+                            df = search_icd10_pcs_search_bar(query)
+                            # try renaming if PCS uses different names
+                            df = df.rename(columns={col: col for col in df.columns})  # keep as-is if already good
+                            # if Score col exists, normalize
+                            if 'Score (0-100)' in df.columns:
+                                df.rename(columns={'Score (0-100)': 'confidence'}, inplace=True)
 
-            # -----------------------------------------------------------------
-            # NEW: Run the selected search function on MAP CODE and show DataFrame
-            # -----------------------------------------------------------------
-            active_model_key = (
-                'ICD-10 CM' if st.session_state.get('interactive_cm', False) else
-                'ICD-10 PCS' if st.session_state.get('interactive_pcs', False) else
-                'CPT' if st.session_state.get('interactive_cpt', False) else None
-            )
+                        else:  # CPT
+                            df = cpt_search_bar(query)
+                            # normalize names if present
+                            if 'Score (0-100)' in df.columns:
+                                df.rename(columns={'Score (0-100)': 'confidence'}, inplace=True)
+                            if 'CPT_Code' in df.columns and 'code' not in df.columns:
+                                df.rename(columns={'CPT_Code': 'code'}, inplace=True)
+                            if 'Description' in df.columns and 'description' not in df.columns:
+                                df.rename(columns={'Description': 'description'}, inplace=True)
 
-            st.markdown("#### Search Results (DataFrame)")
-            if not active_model_key:
-                st.warning("Please select a Code Type (ICD-10 CM / ICD-10 PCS / CPT).")
+                    except Exception as e:
+                        st.error(f"Error while fetching results: {e}")
+                        df = pd.DataFrame()
+
+                    # Persist after rerun
+                    st.session_state.results_df = df
+                    st.session_state.systems_last = systems
+                    st.session_state.top_k_last = top_k
+                    st.session_state.query_last = query
+                    st.session_state.mapped = True
+                    st.session_state.show_tree = False
+
             else:
-                try:
-                    top_k = st.session_state.get('interactive_top_k', 5)
-                    if active_model_key == 'ICD-10 CM':
-                        df = icd_10_cm_search_bar(disease_name)
-                        
-                    elif active_model_key == 'ICD-10 PCS':
-                        df = search_icd10_pcs_search_bar(disease_name)
-                    else:  # CPT
-                        df = cpt_search_bar(disease_name)
+                st.info("Enter a term to begin mapping.")
 
-                    if df is not None:
-                        st.markdown("### Mapping Results")
-                        st.dataframe(df.head(top_k), use_container_width=True)
-                    else:
-                        st.info("No results returned by the selected search function.")
-                except Exception as e:
-                    st.error(f"Error while fetching results: {e}")
-            # -----------------------------------------------------------------
-            
-    # --------------------------------------------------------------------------------
-    # KEY FIX: Batch Processing - Centralized Upload and Code Type Filters
-    # --------------------------------------------------------------------------------
-    elif st.session_state.app_mode == 'Batch Processing':
-        
-        st.markdown(
-            f'<h3 style="color: {COLOR_DEEP_NAVY};">Batch Processing</h3>',
-            unsafe_allow_html=True
-        )
+    # --- RESULTS AREA ---
+    if (
+        st.session_state.mapped
+        and st.session_state.results_df is not None
+        and not st.session_state.results_df.empty
+    ):
+        df = st.session_state.results_df.copy()
+        systems = st.session_state.systems_last
+        top_k = st.session_state.top_k_last
 
-        st.markdown('<div class="st-card-modern" style="padding: 30px;">', unsafe_allow_html=True)
-        st.markdown(f'<h4 style="color: {COLOR_DEEP_NAVY}; margin-bottom: 10px; text-align: center;">Upload File and Configure Batch</h4>', unsafe_allow_html=True)
+        # Safe limit
+        try:
+            limit = len(df) if top_k == "All" else int(top_k)
+        except:
+            limit = 5
 
-        uploaded_file = st.file_uploader("Upload CSV", type=['csv'], help="Upload a CSV file with disease names.", key='file_uploader')
-        
-        st.markdown("---")
+        # Normalize confidence column if present
+        if 'confidence' in df.columns:
+            df['confidence'] = pd.to_numeric(df['confidence'], errors='coerce').fillna(0)
+        else:
+            # if no explicit confidence, create a placeholder 0 (so code path is uniform)
+            df['confidence'] = 0
 
-        config_col1, config_col2, config_col3 = st.columns([1, 2, 1])
-        
-        with config_col1:
-            st.selectbox(
-                'Top k results per term',
-                options=[5, 10, 25],
-                index=0,
-                key='batch_top_k'
-            )
+        # Sort & TopK
+        results_sorted = df.sort_values(by="confidence", ascending=False)
+        df_topk = results_sorted.head(limit)
+        st.markdown(f"### Found {len(df_topk)} Matches")
 
-        with config_col2:
-            st.markdown('<p style="font-weight: 600; margin-bottom: 0px;">Code Type Filters</p>', unsafe_allow_html=True)
-            col_cm, col_pcs, col_cpt = st.columns(3)
+        # Render result cards consistently across systems
+        for _, item in df_topk.iterrows():
+            code = item.get('code', item.get('Code', ''))
+            desc = item.get('description', item.get('Description', ''))
+            conf = int(item.get('confidence', 0))
+            color = "#10b981" if conf > 50 else "#f59e0b"
+            label = systems
 
-            # -----------------------------------------------------------------
-            # NEW: Mutually-exclusive checkboxes (Batch)
-            # -----------------------------------------------------------------
-            with col_cm:
-                st.checkbox(
-                    'ICD-10 CM',
-                    value=st.session_state.batch_cm,
-                    key='batch_cm',
-                    on_change=_set_batch_code_type,
-                    args=('batch_cm',)
-                )
-            with col_pcs:
-                st.checkbox(
-                    'ICD-10 PCS',
-                    value=st.session_state.batch_pcs,
-                    key='batch_pcs',
-                    on_change=_set_batch_code_type,
-                    args=('batch_pcs',)
-                )
-            with col_cpt:
-                st.checkbox(
-                    'CPT',
-                    value=st.session_state.batch_cpt,
-                    key='batch_cpt',
-                    on_change=_set_batch_code_type,
-                    args=('batch_cpt',)
-                )
-            # -----------------------------------------------------------------
+            st.markdown(f"""
+            <div class="result-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="background:#fdf2f8; color:#db2777;
+                            padding:2px 8px; border-radius:4px;
+                            font-size:0.75rem; font-weight:bold;">
+                            {label}
+                        </span>
+                        <h3 style="margin:4px 0 0 0; color:#0f172a;">{code}</h3>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:1.25rem; font-weight:bold; color:{color};">
+                            {conf}%
+                        </div>
+                        <div style="font-size:0.75rem; color:#64748b;">Confidence</div>
+                    </div>
+                </div>
+                <p style="margin-top:8px; color:#334155;">{desc}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        with config_col3:
-            st.markdown('<div style="height: 30px;"></div>', unsafe_allow_html=True)
-            if uploaded_file is None:
-                st.button('Process Batch', key='process_disabled_btn', disabled=True, type='primary', use_container_width=True)
-            else:
-                if st.button('Process Batch', key='process_batch_btn', type='primary', use_container_width=True):
-                    st.session_state.batch_processed = True
-                
-        st.markdown('</div>', unsafe_allow_html=True)
+        # ---- ONTOLOGY (only for ICD-10-CM) ----
+        if systems == 'ICD-10-CM':
+            # Ensure code_3 and grouper exist to pick chapter options
+            try:
+                df_topk['code_3'] = df_topk['code'].astype(str).str.strip().str[:3]
+                grouper = sorted(df_topk['code_3'].unique().tolist())
+            except Exception:
+                grouper = []
 
-        if st.session_state.get('batch_processed', False):
-            st.markdown(f'<h3 style="color: {COLOR_DEEP_NAVY}; margin-top: 30px;">Processed Batch Results</h3>', unsafe_allow_html=True)
-            
-            st.download_button(
-                "Export Results (CSV)",
-                data="Original Input Term,CODE,Confidence\nExample,A01.0,0.95", 
-                file_name="disease_mapper_batch_results.csv",
-                mime="text/csv",
-                key='download_results_btn',
-                help="Download the complete mapping results."
-            )
-            
-            st.markdown('<div class="st-card-modern">', unsafe_allow_html=True)
-            # results_html = get_sample_results(mode='batch')
-            # st.markdown(results_html, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            if grouper:
+                selected_chapter = st.selectbox("Select Group", grouper, key="select_chapter")
+                st.session_state.selected_chapter = selected_chapter
 
-# --- 4. MAIN APP LOGIC ---
+                if st.button(f"Show ICD Ontology Tree for {selected_chapter}",
+                             key=f"tree_btn_{selected_chapter}"):
+                    st.session_state.show_tree = True
 
-if __name__ == '__main__':
-    st.set_page_config(layout="wide", page_title="Disease Mapper - Cognitio Analytics")
-    set_custom_css()
-    
-    if st.session_state.page == 'landing':
-        landing_page()
+                if st.session_state.show_tree and st.session_state.selected_chapter:
+                    try:
+                        node = node_dict[st.session_state.selected_chapter]
+                        graph = build_networkx_graph(node)
+
+                        fig = plt.figure(figsize=(8, 8))
+                        visualize_large_graph(graph)
+
+                        buf = BytesIO()
+                        plt.savefig(buf, format="png")
+
+                        c3, c4 = st.columns([3, 1])
+
+                        # Graph
+                        with c3:
+                            st.image(buf)
+
+                        # Details card
+                        with c4:
+                            row = df_grp_chap[
+                                df_grp_chap['Code_Grouper'] == st.session_state.selected_chapter
+                            ].iloc[0]
+                            with st.container(border=True):
+                                st.markdown("### 📘 ICD-10-CM Ontology Details")
+                                
+                                st.markdown("**Grouper Description**")
+                                st.write(row['Grouper_description'])
+                                
+                                st.markdown("**Section**")
+                                st.write(f"{row['Section_No']} – {row['Section_Name']}")
+                                
+                                st.markdown("**Chapter**")
+                                st.write(f"{row['Chapter_No']} – {row['Chapter_Name']}")
+
+
+
+
+                    except Exception as e:
+                        st.error(f"Ontology visualization error: {e}")
+
+    # -------- EMPTY STATE --------
     else:
-        app_interface()
+        if not st.session_state.mapped:
+            st.info("Enter a term to begin mapping.")
+
+def show_batch():
+    st.title("Batch Processing")
+    st.markdown("Bulk process CSV or Excel files.")
+    with st.container():
+        c1,c2 = st.columns([3,1])
+        with c1:
+            uploaded = st.file_uploader("Drag and drop file here", type=['csv', 'xlsx'])
+        with c2:
+            top_k = st.selectbox("Limit Results", [1, 3, 5, 10,15], index=2)
+        
+        systems = st.selectbox(
+            "Filter by System", 
+            ["ICD-10-CM", "ICD-10-PCS", "CPT"], 
+            index =2
+        )
+        
+        if uploaded:
+            if uploaded.name.endswith('.csv'):
+                df = pd.read_csv(uploaded)
+            else :
+                df = pd.read_excel(uploaded)
+            
+            st.dataframe(df.head(2), use_container_width=True)
+
+            st.success(f"Ready to process: {uploaded.name}")
+            if st.button("Start Batch Job"):
+                # my_bar = st.progress(0)
+                # # for i in range(100):
+                # #     time.sleep(0.01)
+                # #     my_bar.progress(i + 1)
+                # # st.balloons()
+                df_result = batch_search_function(systems,df,top_k)
+                
+                st.markdown("### ✅ Processing Complete")
+                st.dataframe(df_result, use_container_width=True)
+
+def show_nlp():
+    st.title("Clinical NLP Analysis")
+    st.markdown("Extract codes from unstructured clinical notes.")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        text = st.text_area("Clinical Note", height=250, placeholder="Patient presenting with...")
+        if st.button("Analyze Text"):
+            with st.spinner("Extracting entities..."):
+                time.sleep(1.5)
+                st.success("Entities Extracted")
+                
+                # Mock NLP Result
+                st.markdown("""
+                <div class="result-card">
+                    <h4>Extracted Entities</h4>
+                    <ul>
+                        <li><b>Acute chest pain</b> → <code style="color:#db2777">R07.9</code> (95%)</li>
+                        <li><b>Hypertension</b> → <code style="color:#db2777">I10</code> (98%)</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+                
+    with col2:
+        st.info("💡 **Tip:** Paste anonymized clinical text. The AI will identify diagnoses, procedures, and medications automatically.")
+
+# -----------------------------------------------------------------------------
+# ROUTER (USES SESSION STATE)
+# -----------------------------------------------------------------------------
+if st.session_state.current_page == "Dashboard":
+    show_dashboard()
+elif st.session_state.current_page == "Interactive Mapping":
+    show_interactive()
+elif st.session_state.current_page == "Batch Processing":
+    show_batch()
+elif st.session_state.current_page == "Clinical NLP":
+    show_nlp()
